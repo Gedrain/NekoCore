@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#05000a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="icon.png">
+    <link rel="apple-touch-icon" href="icon.png">
+    
+    <title>NekoCore v70</title>
+    
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.18.2.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;700;800;900&family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css">
+    
+    <link rel="stylesheet" href="css/style.css?v=68">
+    <link rel="stylesheet" href="css/style2.css?v=71">
+    <link rel="stylesheet" href="css/style3.css?v=9"> <style id="theme-style"></style>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <script>
+        window.State = window.State || {
+            user: { uid: 'temp_bypass_id', displayName: 'Loading...' },
+            token: null
+        };
+
+        window.onerror = function(msg, url, line, col, error) {
+            if (msg.includes("uid") || msg.includes("State.user") || msg.includes("null") || msg.includes("Script error") || msg.includes("device not found")) {
+                console.warn("[Auto-Fix] Suppressing startup error:", msg);
+                
+                setTimeout(() => {
+                    const loader = document.getElementById('loader');
+                    if(loader && !loader.classList.contains('hidden')) loader.classList.add('hidden');
+                    
+                    const isAuth = (window.currentUser || (firebase.auth && firebase.auth().currentUser));
+                    
+                    if(!isAuth && document.getElementById('view-auth')) {
+                         document.getElementById('view-auth').classList.remove('hidden');
+                    }
+                }, 2000); 
+                return true; 
+            }
+            return false;
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!navigator.mediaDevices) navigator.mediaDevices = {};
+            const originalGUM = navigator.mediaDevices.getUserMedia;
+            
+            navigator.mediaDevices.getUserMedia = async function(constraints) {
+                try {
+                    if (originalGUM) return await originalGUM.call(navigator.mediaDevices, constraints);
+                    else throw new Error("getUserMedia not supported natively");
+                } catch (e) {
+                    console.warn("[Media Patch] Creating dummy stream.");
+                    try {
+                        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                        const oscillator = ctx.createOscillator();
+                        const dst = ctx.createMediaStreamDestination();
+                        oscillator.connect(dst);
+                        oscillator.start();
+                        if (constraints.video) {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 640; canvas.height = 480;
+                            const stream = canvas.captureStream(30);
+                            dst.stream.addTrack(stream.getVideoTracks()[0]);
+                        }
+                        return dst.stream;
+                    } catch(err) { throw err; }
+                }
+            };
+        });
+    </script>
+</head>
+<body>
+    
+    <div id="global-player-bar" class="global-audio-bar hidden">
+        <div class="gab-controls">
+            <button onclick="Chat.seekGlobal(-10)"><i class="fas fa-backward"></i></button>
+            <button id="gab-play-btn" onclick="Chat.toggleGlobalPlay()"><i class="fas fa-play"></i></button>
+            <button onclick="Chat.seekGlobal(10)"><i class="fas fa-forward"></i></button>
+        </div>
+        <div class="gab-info">
+            <div id="gab-title" class="gab-title">Select Track...</div>
+            
+            <div class="gab-slider-wrapper">
+                <input type="range" id="gab-slider" min="0" max="100" value="0" step="0.1" oninput="Chat.onSeekInput(this)">
+            </div>
+
+        </div>
+        <div class="gab-meta">
+            <span id="gab-time">0:00</span>
+            <button class="gab-btn-sm" id="gab-speed" onclick="Chat.toggleGlobalSpeed()">1x</button>
+            <button class="gab-btn-sm" onclick="Chat.closeGlobalPlayer()"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+    <div id="toast-container"></div>
+    <div id="bg-canvas"></div> 
+    
+    <div id="loader">
+        <div id="boot-log" class="terminal-container">
+            <p class="log-line">Initializing KERNEL...</p>
+            <p class="log-line" style="animation-delay:0.1s">Loading modules: [AUTH, CRYPTO, NET]</p>
+            <p class="log-line" style="animation-delay:0.2s">Establishing secure uplink...</p>
+            <p class="log-line" style="animation-delay:0.3s">Verifying handshake...</p>
+            <p class="log-line" style="animation-delay:0.4s">Accessing NEKO_GRID...</p>
+        </div>
+        <div id="glitch-logo" class="glitch-logo-container">
+            <div class="glitch-text" data-text="NEKOCORE">NEKOCORE</div>
+        </div>
+    </div>
+
+    <div id="view-pending" class="pending-screen hidden">
+        <div class="pending-box">
+            <div class="pending-icon"><i class="fas fa-user-lock"></i></div>
+            <div class="pending-title">APPROVAL REQUIRED</div>
+            <div class="pending-desc">
+                YOUR IDENTITY HAS BEEN REGISTERED BUT REQUIRES ADMINISTRATIVE CLEARANCE.
+                <br><br>
+                PLEASE WAIT WHILE AN ADMINISTRATOR VERIFIES YOUR CREDENTIALS.
+            </div>
+            <button class="btn-text" style="border-color:var(--warning); color:var(--warning);" onclick="Auth.logout()">TERMINATE CONNECTION</button>
+        </div>
+    </div>
+
+    <div id="view-ban" class="ban-terminal hidden">
+        <div class="ban-content">
+            <div id="ban-console"></div>
+            <div id="ban-message" class="hidden">
+                <h1 class="glitch-text text-danger" data-text="ACCESS DENIED">ACCESS DENIED</h1>
+                <div class="ban-details">
+                    <p>ADMINISTRATIVE LOCKDOWN ACTIVE</p>
+                    <p>REASON: <span id="ban-reason-text" style="color:#fff; font-weight:bold;">VIOLATION</span></p>
+                </div>
+                <button class="btn-text" style="margin-top:20px; border-color:#ff0055; color:#ff0055;" onclick="Auth.logout()">TERMINATE SESSION</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="voice-overlay" class="voice-terminal-overlay hidden">
+        <div class="vt-window">
+            <div class="vt-header">
+                <span style="color:#d600ff;">root@neko-core</span>:~# connect_voice_protocol.sh
+            </div>
+            <div id="vt-content" class="vt-content"></div>
+        </div>
+    </div>
+
+    <div id="app-root">
+        <div id="view-auth" class="hidden auth-overlay">
+            <div class="auth-card">
+                <div class="auth-header">
+                    <div class="auth-logo-glitch" data-text="NEKO ID">NEKO ID</div>
+                    <div class="auth-subtitle">SECURE ACCESS TERMINAL</div>
+                </div>
+                <div class="auth-switch-container">
+                    <div class="auth-switch-bg"></div>
+                    <div class="auth-switch-btn active" onclick="Auth.setMode(false)" id="tab-login">LOGIN</div>
+                    <div class="auth-switch-btn" onclick="Auth.setMode(true)" id="tab-reg">JOIN</div>
+                </div>
+                <div class="auth-form-body">
+                    <div class="input-group collapsed" id="group-nick">
+                        <i class="fas fa-user-astronaut input-icon"></i>
+                        <input type="text" id="auth-nick" placeholder=" " autocomplete="off"><label>CODENAME</label><div class="input-line"></div>
+                    </div>
+                    <div class="input-group">
+                        <i class="fas fa-at input-icon"></i>
+                        <input type="email" id="auth-email" placeholder=" " autocomplete="off"><label>EMAIL</label><div class="input-line"></div>
+                    </div>
+                    <div class="input-group">
+                        <i class="fas fa-key input-icon"></i>
+                        <input type="password" id="auth-pass" placeholder=" "><label>PASSWORD</label><i class="fas fa-eye input-reveal" onclick="Auth.togglePassVisibility(this)"></i><div class="input-line"></div>
+                    </div>
+                </div>
+                <button class="btn-cyber" onclick="Auth.submit()"><span class="btn-content">INITIALIZE_SESSION</span><div class="btn-glitch-layers"></div><div class="btn-scanline"></div></button>
+                <div class="auth-footer"><span onclick="Auth.reset()" class="link-hover">FORGOT_CREDENTIALS?</span></div>
+            </div>
+        </div>
+
+        <div id="view-main" class="hidden">
+            <div id="sidebar-overlay" class="sidebar-overlay" onclick="UI.toggleMenu()"></div>
+            <div id="sidebar" class="sidebar">
+                <div class="sidebar-header"><span class="accent-text">NEKO</span>CORE</div>
+                <div class="nav-group">
+                    <div class="nav-item active" onclick="Route('channels')"><i class="fas fa-hashtag"></i> CHANNELS</div>
+                    <div class="nav-item" id="nav-dms" onclick="Route('dms')"><i class="fas fa-comments"></i> <span>MESSAGES</span></div>
+                    <div class="nav-item" onclick="Route('voice')"><i class="fas fa-microphone-alt"></i> VOICE</div>
+                    <div class="nav-item" onclick="Route('search')"><i class="fas fa-search"></i> SEARCH</div>
+                </div>
+                <div class="nav-group bottom">
+                    <div id="nav-admin" class="nav-item hidden" onclick="Route('admin')"><i class="fas fa-shield-alt" style="color:#ff0055"></i> ADMIN</div>
+                    <div class="nav-item" onclick="Route('settings')"><i class="fas fa-cog"></i> SETTINGS</div>
+                    <div class="nav-item" onclick="Auth.logout()"><i class="fas fa-power-off"></i> EXIT</div>
+                </div>
+            </div>
+
+            <div class="content-wrapper">
+                <div id="tab-channels" class="tab-pane active">
+                    <div class="top-bar">
+                        <div class="menu-trigger" onclick="UI.toggleMenu()">&#9776;</div>
+                        <div class="top-title">CHANNELS</div>
+                        <div style="display:flex; justify-content:center; align-items:center;">
+                            <i class="fas fa-plus-circle" style="cursor:pointer; color:var(--secondary); font-size:1.2rem;" onclick="document.getElementById('modal-create').classList.add('open')"></i>
+                        </div>
+                    </div>
+                    <div id="channel-list" class="list-container"></div>
+                </div>
+                
+                <div id="tab-chat" class="tab-pane">
+                    <div class="top-bar">
+                        <div class="menu-trigger" style="font-size:1.2rem;" onclick="Chat.back()"><i class="fas fa-arrow-left"></i></div>
+                        <div class="top-title" id="chat-title">CHAT</div>
+                        <div id="chat-top-right" style="width:60px; display:flex; justify-content:center; align-items:center;"></div>
+                    </div>
+                    <div id="chat-feed" class="messages-container"></div>
+                    
+                    <div class="chat-input-area">
+                        <div id="media-preview" class="media-preview hidden">
+                            <img id="preview-img-el">
+                            <i class="fas fa-times" onclick="Chat.clearPreview()"></i>
+                        </div>
+
+                        <div id="chat-input-controls">
+                            <div id="input-controls">
+                                <label for="file-in" style="cursor:pointer; color:#888; font-size:1.2rem; margin-right:10px;"><i class="fas fa-paperclip"></i></label>
+                                <input type="file" id="file-in" hidden accept="image/*">
+                                <input type="text" id="msg-in" placeholder="Message..." autocomplete="off">
+                                
+                                <button id="btn-mic" onclick="Chat.startRec()"><i class="fas fa-microphone"></i></button>
+                                <button id="btn-send" class="hidden" onclick="Chat.send()"><i class="fas fa-paper-plane"></i></button>
+                            </div>
+                        </div>
+
+                        <div id="recording-ui" class="hidden">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <div class="pulsing-dot"></div>
+                                <span id="rec-time">0:00</span>
+                            </div>
+                            <div class="rec-controls">
+                                <i class="fas fa-times" onclick="Chat.cancelRec()"></i>
+                                <i class="fas fa-paper-plane" onclick="Chat.finishRec()"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-dms" class="tab-pane"><div class="top-bar"><div class="menu-trigger" onclick="UI.toggleMenu()">&#9776;</div><div class="top-title">MESSAGES</div><div></div></div><div id="dm-list" class="list-container"></div></div>
+                
+                <div id="tab-voice" class="tab-pane">
+                    <div class="top-bar">
+                        <div class="menu-trigger" onclick="UI.toggleMenu()">&#9776;</div>
+                        <div class="top-title">VOICE ROOMS</div>
+                        <div style="display:flex; justify-content:center; align-items:center;">
+                            <i class="fas fa-plus-circle" style="cursor:pointer; color:var(--secondary); font-size:1.2rem;" onclick="document.getElementById('modal-create-voice').classList.add('open')"></i>
+                        </div>
+                    </div>
+                    <div id="voice-list" class="list-container"></div>
+                </div>
+
+                <div id="tab-search" class="tab-pane"><div class="top-bar"><div class="menu-trigger" onclick="UI.toggleMenu()">&#9776;</div><div class="top-title">SEARCH</div><div></div></div><div style="padding:20px;"><input type="text" id="search-in" placeholder="Search..." oninput="Search.run()"></div><div id="search-results" class="list-container"></div></div>
+                <div id="tab-settings" class="tab-pane"><div class="top-bar"><div class="menu-trigger" onclick="UI.toggleMenu()">&#9776;</div><div class="top-title">SYSTEM CONFIG</div><div></div></div><div class="admin-scroll-area"><div id="settings-dynamic-area" class="p-20 flex-col"></div></div></div>
+                
+                <div id="tab-admin" class="tab-pane">
+                    <div class="top-bar">
+                        <div class="menu-trigger" onclick="UI.toggleMenu()">&#9776;</div>
+                        <div class="top-title text-danger">ROOT ACCESS</div>
+                        <div></div>
+                    </div>
+                    <div class="admin-toolbar">
+                        <input type="text" id="admin-search" placeholder="Search User (ID/Name)..." oninput="Admin.filter()">
+                        <div class="admin-stats">
+                            <span id="admin-count-total">0 Users</span>
+                        </div>
+                    </div>
+                    <div class="admin-scroll-area">
+                        <div id="super-admin-controls" class="hidden"></div>
+                        <div id="admin-list" class="admin-grid-new"></div>
+                    </div>
+                </div>
+
+            </div>
+            
+            <div id="call-interface" class="call-interface hidden full-mode">
+                <div class="ci-header">
+                    <div class="v-status-light"></div>
+                    <div class="ci-status">
+                        <span id="ci-status-text">CONNECTING...</span>
+                    </div>
+                    <button class="btn-resize-overlay" onclick="Voice.toggleOverlaySize()">
+                        <i id="icon-resize" class="fas fa-compress-alt"></i>
+                    </button>
+                </div>
+
+                <div id="video-bg-layer" class="video-layer">
+                    <div id="video-remote-container" class="video-remote-box"></div>
+                </div>
+
+                <div id="ci-user-info" class="ci-user-info">
+                    <img id="ci-avi" src="https://via.placeholder.com/150" class="ci-avi">
+                    <div id="ci-name" class="ci-name">Unknown</div>
+                </div>
+
+                <div class="ci-controls-wrapper">
+                    <div class="ci-volume-box">
+                        <label><i class="fas fa-volume-up"></i> Remote Volume</label>
+                        <input type="range" id="ci-remote-vol" min="0" max="200" value="100" oninput="Voice.updateActiveRemoteVolume(this.value)">
+                    </div>
+
+                    <div class="ci-buttons">
+                        <button id="btn-ci-mute" class="ci-btn" onclick="Voice.toggleMute()" title="Mute Mic"><i class="fas fa-microphone"></i></button>
+                        <button id="btn-ci-deaf" class="ci-btn" onclick="Voice.toggleDeafen()" title="Deafen"><i class="fas fa-headphones"></i></button>
+                        <button id="btn-ci-cam" class="ci-btn" onclick="Video.toggleCamera()" title="Camera"><i class="fas fa-video-slash"></i></button>
+                        <button id="btn-ci-screen" class="ci-btn" onclick="Video.toggleScreenShare()" title="Screen Share"><i class="fas fa-desktop"></i></button>
+                        <button class="ci-btn danger" onclick="Voice.leave()" title="Leave"><i class="fas fa-phone-slash"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="video-local-preview" class="video-local-pip hidden"></div>
+
+        </div>
+    </div>
+
+    <div id="modal-incoming-call" class="modal-overlay">
+        <div class="incoming-call-box">
+            <div class="inc-ring-effect"></div>
+            <div class="inc-ring-effect" style="animation-delay: 0.5s"></div>
+            <img id="inc-call-avi" src="https://via.placeholder.com/100" class="inc-avi">
+            <div class="inc-info">
+                <div class="inc-label">INCOMING TRANSMISSION</div>
+                <div id="inc-call-name" class="inc-name">Unknown User</div>
+            </div>
+            <div class="inc-actions">
+                <button class="btn-inc-decline" onclick="Voice.rejectCall()"><i class="fas fa-times"></i></button>
+                <button class="btn-inc-accept" onclick="Voice.acceptCall()"><i class="fas fa-phone"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-color-picker" class="modal-overlay">
+        <div class="modal-box" style="width: 350px; max-width: 95%;">
+            <h3>SELECT COLOR</h3>
+            <div class="picker-container">
+                <div class="picker-preview" id="picker-preview-box"></div>
+                <div class="picker-spectrum" id="picker-spectrum" onclick="Settings.pickSpectrum(event)"></div>
+                <div class="picker-controls"><span>HEX:</span><input type="text" id="picker-hex-in" value="#ffffff" oninput="Settings.updateFromHex(this.value)"></div>
+                <div class="picker-presets" id="picker-presets"></div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn-solid" onclick="Settings.confirmColor()">APPLY</button>
+                <button class="btn-danger" onclick="document.getElementById('modal-color-picker').classList.remove('open')">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-reactions" class="modal-overlay" onclick="document.getElementById('modal-reactions').classList.remove('open')">
+        <div class="reaction-picker-modal" onclick="event.stopPropagation()">
+            <div class="rp-grid">
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '👍')">👍</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '👎')">👎</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '❤️')">❤️</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🔥')">🔥</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '😂')">😂</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🤣')">🤣</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '😮')">😮</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '😢')">😢</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '😭')">😭</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '😡')">😡</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '💩')">💩</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🎉')">🎉</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🤡')">🤡</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '👀')">👀</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🙏')">🙏</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🤝')">🤝</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '👌')">👌</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '💀')">💀</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '🗿')">🗿</div>
+                <div class="reaction-item" onclick="Chat.react(Chat.pendingReactionMsgId, '💋')">💋</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-prompt" class="modal-overlay">
+        <div class="modal-box" style="border: 1px solid var(--primary); background: rgba(10,10,15,0.95);">
+            <h3 id="prompt-title" style="color:var(--primary); text-transform:uppercase;">ACTION REQUIRED</h3>
+            <p id="prompt-desc" style="color:#aaa; margin-bottom:15px; font-size:0.9rem;"></p>
+            <div class="input-group">
+                <i class="fas fa-pen input-icon"></i>
+                <input type="text" id="prompt-input" placeholder=" " autocomplete="off">
+                <label id="prompt-label">INPUT</label>
+                <div class="input-line"></div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button id="btn-prompt-confirm" class="btn-solid">CONFIRM</button>
+                <button class="btn-danger" onclick="document.getElementById('modal-prompt').classList.remove('open')">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-create" class="modal-overlay">
+        <div class="modal-box">
+            <h3>NEW CHANNEL</h3>
+            <div class="ch-preview-box">
+                <div id="new-ch-banner-prev" class="ch-preview-banner"></div>
+                <img id="new-ch-avi-prev" class="ch-preview-avi" src="https://via.placeholder.com/100/000000/ffffff?text=+">
+            </div>
+            <div class="file-grid">
+                <label class="file-zone" for="new-ch-avi"><i class="fas fa-icons"></i><span>Icon</span></label>
+                <label class="file-zone" for="new-ch-banner"><i class="fas fa-panorama"></i><span>Banner</span></label>
+            </div>
+            <input type="file" id="new-ch-avi" hidden accept="image/*">
+            <input type="file" id="new-ch-banner" hidden accept="image/*">
+            <input type="text" id="new-ch-name" placeholder="Name">
+            
+            <label class="toggle-wrapper">
+                <input type="checkbox" id="new-ch-priv" class="toggle-checkbox" onchange="document.getElementById('new-ch-pass').classList.toggle('hidden', !this.checked)">
+                <div class="toggle-switch"></div>
+                <div class="toggle-label">Private Channel</div>
+            </label>
+            <input type="password" id="new-ch-pass" class="hidden" placeholder="Password">
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn-solid" onclick="Channels.create()">CREATE</button>
+                <button class="btn-danger" onclick="document.getElementById('modal-create').classList.remove('open')">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-create-voice" class="modal-overlay">
+        <div class="modal-box">
+            <h3>CREATE VOICE ROOM</h3>
+            <div style="text-align:left; margin-bottom:15px; color:#aaa; font-size:0.8rem;">Establish a new frequency...</div>
+            
+            <div class="ch-preview-box" style="height:100px;">
+                <div id="new-v-banner-prev" class="ch-preview-banner"></div>
+            </div>
+            <label class="file-zone" for="new-v-banner" style="margin-bottom:15px;"><i class="fas fa-panorama"></i><span>Set Banner</span></label>
+            <input type="file" id="new-v-banner" hidden accept="image/*">
+            
+            <input type="text" id="new-v-name" placeholder="Room Name">
+            <label class="toggle-wrapper">
+                <input type="checkbox" id="new-v-priv" class="toggle-checkbox" onchange="document.getElementById('new-v-pass').classList.toggle('hidden', !this.checked)">
+                <div class="toggle-switch"></div>
+                <div class="toggle-label">Private Frequency</div>
+            </label>
+            <input type="password" id="new-v-pass" class="hidden" placeholder="Access Code">
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button class="btn-solid" onclick="Voice.create()">ESTABLISH</button>
+                <button class="btn-danger" onclick="document.getElementById('modal-create-voice').classList.remove('open')">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-voice-pass" class="modal-overlay">
+        <div class="modal-box security-box">
+            <div class="security-header"><i class="fas fa-lock"></i><span>SECURE FREQUENCY</span></div>
+            <div class="security-body">
+                <p>ENCRYPTED VOICE SIGNAL</p>
+                <div class="input-group"><i class="fas fa-key input-icon"></i><input type="password" id="voice-auth-pass" placeholder="ACCESS CODE"><div class="input-line"></div></div>
+            </div>
+            <div class="security-footer">
+                <button class="btn-solid" onclick="Voice.authAndJoin()">CONNECT</button>
+                <button class="btn-danger" onclick="document.getElementById('modal-voice-pass').classList.remove('open')">ABORT</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="modal-pass" class="modal-overlay">
+        <div class="modal-box security-box">
+            <div class="security-header"><i class="fas fa-lock"></i><span>SECURE CHANNEL</span></div>
+            <div class="security-body">
+                <p>ENCRYPTED SIGNAL DETECTED</p>
+                <div class="input-group"><i class="fas fa-key input-icon"></i><input type="password" id="ch-auth-pass" placeholder="ENTER ACCESS CODE"><div class="input-line"></div></div>
+            </div>
+            <div class="security-footer">
+                <button class="btn-solid" onclick="Channels.auth()">DECRYPT & ENTER</button>
+                <button class="btn-danger" onclick="document.getElementById('modal-pass').classList.remove('open')">ABORT</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-members" class="modal-overlay"><div class="modal-box" style="height: 80vh; display:flex; flex-direction:column; padding:0; overflow:hidden;"><div class="neko-card-header" style="padding:15px; border-bottom:1px solid #333;"><span>MEMBERS</span><i class="fas fa-users" style="color:var(--primary)"></i></div><div id="members-list" class="list-container" style="flex:1; overflow-y:auto; padding:15px; display:flex; flex-direction:column; gap:10px;"></div><div style="padding:15px; border-top:1px solid #333; background:#09090b;"><button class="btn-text" onclick="document.getElementById('modal-members').classList.remove('open')">CLOSE</button></div></div></div>
+    
+    <div id="modal-user" class="modal-overlay">
+        <div class="modal-content profile-card-modal">
+            <div class="neko-card-header"><span>NEKOID ACCESS CARD</span><i class="fas fa-microchip"></i></div>
+            <div id="u-banner" class="p-banner"></div>
+            <div class="p-content-grid">
+                <div class="p-left-col"><div class="p-avi-wrapper"><img id="u-avi" class="p-avi"><div id="u-status-indicator" class="p-status-dot"></div></div><div id="u-id" class="p-id-chip">ID: ???</div></div>
+                <div class="p-right-col"><div class="p-main-info"><div id="u-name" class="p-name">Username</div><div id="u-prefix-container"></div></div><div id="u-bio" class="p-bio"></div><div class="p-stats-grid"><div class="p-stat-row"><span class="p-label">ROLE</span><span id="u-role" class="p-value role-badge">USER</span></div><div class="p-stat-row"><span class="p-label">JOINED</span><span id="u-reg-date" class="p-value">Unknown</span></div><div class="p-stat-row"><span class="p-label">SEEN</span><span id="u-last-seen" class="p-value">Now</span></div></div></div>
+            </div>
+            <div class="p-badges-section"><div class="p-label-small">ACHIEVEMENTS</div><div id="u-badges" class="p-badges-list"></div></div>
+            <div class="p-footer-actions">
+                <button class="btn-solid" onclick="Chat.startDM()">MESSAGE</button>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;"><button class="btn-danger" id="btn-block" onclick="Block.toggle()">BLOCK</button><button class="btn-text" style="margin:0; background:#111; border:1px solid #333; color:#ccc; border-radius:10px;" onclick="document.getElementById('modal-user').classList.remove('open')">CLOSE</button></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-cropper" class="modal-overlay"><div class="modal-box"><div class="crop-area"><img id="crop-img" style="display:block; max-width:100%;"></div><div class="crop-controls"><button class="btn-danger" onclick="UI.Crop.cancel()">CANCEL</button><button class="btn-solid" onclick="UI.Crop.finish()">APPLY</button></div></div></div>
+    
+    <div id="modal-channel-settings" class="modal-overlay"><div class="modal-box"><h3>CHANNEL SETTINGS</h3><div class="ch-preview-box"><div id="edit-ch-banner-prev" class="ch-preview-banner"></div><img id="edit-ch-avi-prev" class="ch-preview-avi" src="https://via.placeholder.com/100/000000/ffffff?text=+"></div><div class="file-grid"><label class="file-zone" for="edit-ch-avi"><i class="fas fa-icons"></i><span>Icon</span></label><label class="file-zone" for="edit-ch-banner"><i class="fas fa-panorama"></i><span>Banner</span></label></div><input type="file" id="edit-ch-avi" hidden accept="image/*"><input type="file" id="edit-ch-banner" hidden accept="image/*"><input type="text" id="edit-ch-name" placeholder="Channel Name"><div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;"><button class="btn-solid" onclick="Channels.saveSettings()">SAVE</button><button class="btn-danger" style="background:rgba(255,153,0,0.1); border-color:#ff9900; color:#ff9900;" onclick="Channels.leaveFromSettings()">LEAVE CHANNEL</button><button class="btn-danger" onclick="Channels.del()">DELETE CHANNEL</button><button class="btn-text" onclick="document.getElementById('modal-channel-settings').classList.remove('open')">CANCEL</button></div></div></div>
+    <div id="modal-edit" class="modal-overlay"><div class="modal-box"><h3>EDIT</h3><textarea id="edit-text" rows="3"></textarea><div style="display:flex; gap:10px; margin-top:20px;"><button class="btn-solid" onclick="Chat.confirmEdit()">SAVE</button><button class="btn-danger" onclick="document.getElementById('modal-edit').classList.remove('open')">X</button></div></div></div>
+    <div id="modal-img" class="modal-overlay" onclick="this.classList.remove('open')"><img id="full-img" style="max-width:95%; max-height:90%; border-radius:12px; border:2px solid #d600ff;"></div>
+    <div id="custom-alert" class="modal-overlay"><div class="modal-box"><h3 id="alert-title"></h3><p id="alert-text" style="color:#aaa;"></p><button class="btn-solid" style="margin-top:20px;" onclick="document.getElementById('custom-alert').classList.remove('open')">OK</button></div></div>
+    <div id="custom-confirm" class="modal-overlay"><div class="modal-box"><h3 id="confirm-title"></h3><p id="confirm-text" style="color:#aaa;"></p><div style="display:flex; gap:10px; margin-top:20px;"><button id="btn-confirm-yes" class="btn-solid">YES</button><button class="btn-danger" onclick="UI.closeConfirm()">NO</button></div></div></div>
+
+    <script src="functions/config.js"></script>
+    <script src="functions/state.js"></script>
+    <script src="functions/utils.js"></script>
+    <script src="functions/ui.js"></script>
+    <script src="functions/profile.js"></script>
+    <script src="functions/settings.js"></script>
+    <script src="functions/chat.js"></script>
+    <script src="functions/channels.js"></script>
+    <script src="functions/search.js"></script>
+    <script src="functions/admin.js"></script>
+    <script src="functions/auth.js"></script>
+    <script src="functions/voice.js"></script>
+    <script src="functions/video.js"></script> 
+    <script src="functions/main.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+    </script>
+</body>
+</html>
